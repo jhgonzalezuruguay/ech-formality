@@ -11,1186 +11,1489 @@ import {
   LineChart,
   Line,
   ReferenceLine,
-  AreaChart,
-  Area,
-  ScatterChart,
-  Scatter,
 } from 'recharts';
 import 'katex/dist/katex.min.css';
 import { BlockMath, InlineMath } from 'react-katex';
-import rawModelParams from './ech_model_params.json';
-import rawTrainSummary from './ech_train_summary.json';
-import rawLockedTest from './ech_locked_test.json';
 
-export interface FeatureCoefficient {
-  name: string;
-  label?: string;
-  category?: string;
-  coef: number;
-  oddsRatio?: number;
-  stdError?: number;
-  zValue?: number;
-  pValue?: number;
-  mean?: number;
-  min?: number;
-  max?: number;
-  type?: 'binary' | 'numeric' | 'categorical';
+// Direct imports of your exported ECH 2025 JSON files
+// Place ech_model_params.json, ech_train_summary.json, and ech_locked_test.json
+// in the same directory as App.tsx (e.g., src/).
+import modelParams from './ech_model_params.json';
+import trainSummary from './ech_train_summary.json';
+import lockedTestData from './ech_locked_test.json';
+
+interface CoefficientRow {
+  term: string;
+  estimate: number;
+  std_error: number;
+  odds_ratio: number;
 }
 
-export interface ModelMetrics {
-  accuracy?: number;
-  precision?: number;
-  recall?: number;
-  f1?: number;
-  auc?: number;
-  rocAuc?: number;
-  logLoss?: number;
-  brierScore?: number;
-  nSamples?: number;
-  positiveRate?: number;
-  tp?: number;
-  fp?: number;
-  tn?: number;
-  fn?: number;
+interface CalibrationBin {
+  bin: number;
+  bin_label: string;
+  n: number;
+  mean_pred: number;
+  observed_rate: number;
 }
 
-export interface ThresholdPoint {
-  threshold: number;
-  accuracy?: number;
-  precision?: number;
-  recall?: number;
-  f1?: number;
-  tpr?: number;
-  fpr?: number;
-  specificity?: number;
+interface FirmSummaryRow {
+  firm_size: string;
+  n: number;
+  observed_rate: number;
+  mean_pred: number;
 }
 
-export interface ModelParamsData {
-  modelName?: string;
-  targetDescription?: string;
-  intercept: number;
-  defaultThreshold?: number;
-  features?: FeatureCoefficient[];
-  coefficients?: Record<string, number>;
-  thresholds?: ThresholdPoint[];
-  metrics?: ModelMetrics;
+interface PovertySummaryRow {
+  is_poor_income: number;
+  is_poor_multi: number;
+  n: number;
+  observed_rate: number;
+  mean_pred: number;
 }
 
-export interface GroupSummaryRow {
-  group: string;
-  subGroup?: string;
-  n?: number;
-  informalityRate?: number;
-  formalityRate?: number;
-  avgPredictedProb?: number;
-  [key: string]: string | number | undefined;
+interface LockedTestRow {
+  y: number;
+  fs: string;
+  occ: string;
+  age: number;
+  edu: number;
+  hh: number;
+  pi: number;
+  pm: number;
 }
 
-export interface TrainSummaryData {
-  datasetName?: string;
-  year?: number;
-  nRows?: number;
-  nFeatures?: number;
-  informalityRate?: number;
-  formalityRate?: number;
-  metrics?: ModelMetrics;
-  byGroup?: GroupSummaryRow[];
-  byDepartment?: GroupSummaryRow[];
-  byEducation?: GroupSummaryRow[];
-  byAgeGroup?: GroupSummaryRow[];
-  distributions?: Array<Record<string, string | number>>;
+interface TestEvaluationResult {
+  nTest: number;
+  observedFormalityRate: number;
+  meanPredictedProb: number;
+  testLog10Score: number;
+  testAvgLog10Score: number;
+  nullLog10Score: number;
+  nullAvgLog10Score: number;
+  scoreGainOverNull: number;
+  calibrationBins: CalibrationBin[];
+  byFirmSize: FirmSummaryRow[];
+  byPoverty: {
+    label: string;
+    n: number;
+    observed_rate: number;
+    mean_pred: number;
+  }[];
 }
 
-export interface LockedTestRecord {
-  id?: string | number;
-  actual?: number;
-  actualInformal?: number;
-  actualFormal?: number;
-  predictedProb?: number;
-  prob?: number;
-  department?: string;
-  education?: string;
-  sex?: string;
-  age?: number;
-  [key: string]: string | number | boolean | null | undefined;
-}
+const FIRM_SIZE_ORDER = [
+  '1_person',
+  '2_to_4',
+  '5_to_9',
+  '10_to_49',
+  '50_plus',
+  'Public_Sector',
+  'Not_Applicable_or_DK',
+];
 
-export interface CalibrationBin {
-  bin: string;
-  meanPredicted: number;
-  observedRate: number;
-  count: number;
-}
+const FIRM_SIZE_LABELS: Record<string, string> = {
+  '1_person': '1 Person (Solo)',
+  '2_to_4': '2 to 4 Workers',
+  '5_to_9': '5 to 9 Workers',
+  '10_to_49': '10 to 49 Workers',
+  '50_plus': '50+ Workers',
+  Public_Sector: 'Public Sector',
+  Not_Applicable_or_DK: 'N/A or Unknown',
+};
 
-export interface LockedTestData {
-  nRows?: number;
-  metrics?: ModelMetrics;
-  thresholds?: ThresholdPoint[];
-  rocCurve?: Array<{ fpr: number; tpr: number; threshold?: number }>;
-  calibration?: CalibrationBin[];
-  predictions?: LockedTestRecord[];
-  rows?: LockedTestRecord[];
-  summaryByDecile?: Array<Record<string, string | number>>;
-}
+const POVERTY_ORDER = [
+  'Neither Poor',
+  'Multidim. Poor Only',
+  'Income Poor Only',
+  'Income + Multidim. Poor',
+];
 
-const modelParams = rawModelParams as unknown as ModelParamsData;
-const trainSummary = rawTrainSummary as unknown as TrainSummaryData;
-const lockedTestData = rawLockedTest as unknown as LockedTestData;
-
-function clamp01(value: number): number {
-  if (Number.isNaN(value)) return 0;
-  if (value < 0) return 0;
-  if (value > 1) return 1;
-  return value;
-}
+const TERM_LABELS: Record<string, string> = {
+  '(Intercept)': 'Intercept (Baseline)',
+  firm_size2_to_4: 'Firm Size: 2 to 4 (vs. 1 Person)',
+  firm_size5_to_9: 'Firm Size: 5 to 9 (vs. 1 Person)',
+  firm_size10_to_49: 'Firm Size: 10 to 49 (vs. 1 Person)',
+  firm_size50_plus: 'Firm Size: 50+ (vs. 1 Person)',
+  firm_sizePublic_Sector: 'Sector: Public Sector (vs. 1 Person)',
+  firm_sizeNot_Applicable_or_DK: 'Firm Size: N/A or Unknown (vs. 1 Person)',
+  'occ_for_modelSelf-Employed': 'Occupation: Self-Employed (vs. Private Wage)',
+  'occ_for_modelOther': 'Occupation: Other (vs. Private Wage)',
+  age: 'Age (per year)',
+  education: 'Education Level (per unit)',
+  household_size: 'Household Size (per member)',
+  is_poor_income: 'Income Poverty (Yes = 1)',
+  is_poor_multi: 'Multidimensional Poverty (Yes = 1)',
+};
 
 function sigmoid(z: number): number {
   if (z >= 0) {
     const ez = Math.exp(-z);
     return 1 / (1 + ez);
+  } else {
+    const ez = Math.exp(z);
+    return ez / (1 + ez);
   }
-  const ez = Math.exp(z);
-  return ez / (1 + ez);
 }
 
-function formatPct(value: number | undefined, decimals = 1): string {
-  if (typeof value !== 'number' || Number.isNaN(value)) return '—';
-  const scaled = value <= 1 && value >= 0 ? value * 100 : value;
-  return `${scaled.toFixed(decimals)}%`;
+function calcLog10Score(y: number[], p: number[]): number {
+  const eps = 1e-12;
+  let total = 0;
+  for (let i = 0; i < y.length; i++) {
+    const pClip = Math.min(Math.max(p[i], eps), 1 - eps);
+    total += y[i] * Math.log10(pClip) + (1 - y[i]) * Math.log10(1 - pClip);
+  }
+  return total;
 }
 
-function formatNum(value: number | undefined, decimals = 3): string {
-  if (typeof value !== 'number' || Number.isNaN(value)) return '—';
-  return value.toFixed(decimals);
-}
+export default function App() {
+  // Interactive Worker Probability Calculator State
+  const [calcFirmSize, setCalcFirmSize] = useState<string>('1_person');
+  const [calcOccupation, setCalcOccupation] = useState<string>('Private Wage Worker');
+  const [calcAge, setCalcAge] = useState<number>(38);
+  const [calcEducation, setCalcEducation] = useState<number>(3);
+  const [calcHouseholdSize, setCalcHouseholdSize] = useState<number>(3);
+  const [calcPoorIncome, setCalcPoorIncome] = useState<boolean>(false);
+  const [calcPoorMulti, setCalcPoorMulti] = useState<boolean>(false);
 
-function formatInt(value: number | undefined): string {
-  if (typeof value !== 'number' || Number.isNaN(value)) return '—';
-  return Math.round(value).toLocaleString('es-UY');
-}
+  // Single-use Locked Test Set State
+  const [confirmUnlockModal, setConfirmUnlockModal] = useState<boolean>(false);
+  const [testUnlocked, setTestUnlocked] = useState<boolean>(false);
+  const [testResults, setTestResults] = useState<TestEvaluationResult | null>(null);
+  const [reflectionNotes, setReflectionNotes] = useState<string>(
+    'Prior Hypothesis: Public sector and larger private firms (50+ workers) dominate formal registration in Uruguay, while income and multidimensional poverty sharply reduce formality odds.'
+  );
 
-function humanizeFeatureName(raw: string): string {
-  return raw
-    .replace(/^factor\(([^)]+)\)/i, '$1: ')
-    .replace(/_/g, ' ')
-    .replace(/([a-z])([A-Z])/g, '$1 $2')
-    .trim();
-}
-
-type TabKey = 'overview' | 'coefficients' | 'evaluation' | 'simulator' | 'methodology';
-
-export function App() {
-  const [activeTab, setActiveTab] = useState<TabKey>('overview');
-  const [threshold, setThreshold] = useState<number>(() => {
-    if (typeof modelParams.defaultThreshold === 'number') {
-      return clamp01(modelParams.defaultThreshold);
-    }
-    return 0.5;
-  });
-  const [featureSearch, setFeatureSearch] = useState<string>('');
-  const [sortByAbsCoef, setSortByAbsCoef] = useState<boolean>(true);
-
-  const normalizedFeatures = useMemo<FeatureCoefficient[]>(() => {
-    if (Array.isArray(modelParams.features) && modelParams.features.length > 0) {
-      return modelParams.features.map((f) => ({
-        ...f,
-        label: f.label || humanizeFeatureName(f.name),
-        oddsRatio: typeof f.oddsRatio === 'number' ? f.oddsRatio : Math.exp(f.coef),
-      }));
-    }
-    if (modelParams.coefficients && typeof modelParams.coefficients === 'object') {
-      return Object.entries(modelParams.coefficients)
-        .filter(([key]) => key.toLowerCase() !== '(intercept)' && key.toLowerCase() !== 'intercept')
-        .map(([name, coef]) => ({
-          name,
-          label: humanizeFeatureName(name),
-          coef: Number(coef),
-          oddsRatio: Math.exp(Number(coef)),
-        }));
-    }
-    return [];
-  }, []);
-
-  const interceptValue = useMemo<number>(() => {
-    if (typeof modelParams.intercept === 'number' && !Number.isNaN(modelParams.intercept)) {
-      return modelParams.intercept;
-    }
-    if (modelParams.coefficients) {
-      const entry = Object.entries(modelParams.coefficients).find(
-        ([k]) => k.toLowerCase() === '(intercept)' || k.toLowerCase() === 'intercept'
-      );
-      if (entry) return Number(entry[1]) || 0;
-    }
-    return 0;
-  }, []);
-
-  const [simInputs, setSimInputs] = useState<Record<string, number>>(() => {
-    const initial: Record<string, number> = {};
-    const list = Array.isArray(modelParams.features)
-      ? modelParams.features
-      : modelParams.coefficients
-      ? Object.entries(modelParams.coefficients)
-          .filter(([k]) => k.toLowerCase() !== '(intercept)' && k.toLowerCase() !== 'intercept')
-          .map(([name]) => ({ name, coef: 0 }))
-      : [];
-    for (const f of list) {
-      initial[f.name] = typeof f.mean === 'number' ? f.mean : 0;
-    }
-    return initial;
-  });
-
-  const testRecords = useMemo<LockedTestRecord[]>(() => {
-    if (Array.isArray(lockedTestData.predictions)) return lockedTestData.predictions;
-    if (Array.isArray(lockedTestData.rows)) return lockedTestData.rows;
-    return [];
-  }, []);
-
-  const thresholdCurve = useMemo<ThresholdPoint[]>(() => {
-    if (Array.isArray(lockedTestData.thresholds) && lockedTestData.thresholds.length > 0) {
-      return lockedTestData.thresholds;
-    }
-    if (Array.isArray(modelParams.thresholds) && modelParams.thresholds.length > 0) {
-      return modelParams.thresholds;
-    }
-    if (testRecords.length === 0) return [];
-
-    const grid: ThresholdPoint[] = [];
-    for (let t = 0.05; t <= 0.951; t += 0.05) {
-      const thr = Number(t.toFixed(2));
-      let tp = 0;
-      let fp = 0;
-      let tn = 0;
-      let fn = 0;
-      for (const r of testRecords) {
-        const y =
-          typeof r.actual === 'number'
-            ? r.actual
-            : typeof r.actualInformal === 'number'
-            ? r.actualInformal
-            : typeof r.actualFormal === 'number'
-            ? r.actualFormal
-            : 0;
-        const p =
-          typeof r.predictedProb === 'number'
-            ? r.predictedProb
-            : typeof r.prob === 'number'
-            ? r.prob
-            : 0;
-        const pred = p >= thr ? 1 : 0;
-        if (pred === 1 && y === 1) tp++;
-        else if (pred === 1 && y === 0) fp++;
-        else if (pred === 0 && y === 0) tn++;
-        else fn++;
-      }
-      const total = tp + fp + tn + fn || 1;
-      const accuracy = (tp + tn) / total;
-      const precision = tp + fp > 0 ? tp / (tp + fp) : 0;
-      const recall = tp + fn > 0 ? tp / (tp + fn) : 0;
-      const specificity = tn + fp > 0 ? tn / (tn + fp) : 0;
-      const f1 = precision + recall > 0 ? (2 * precision * recall) / (precision + recall) : 0;
-      grid.push({
-        threshold: thr,
-        accuracy,
-        precision,
-        recall,
-        f1,
-        tpr: recall,
-        fpr: 1 - specificity,
-        specificity,
-      });
-    }
-    return grid;
-  }, [testRecords]);
-
-  const activeThresholdMetrics = useMemo(() => {
-    if (testRecords.length > 0) {
-      let tp = 0;
-      let fp = 0;
-      let tn = 0;
-      let fn = 0;
-      for (const r of testRecords) {
-        const y =
-          typeof r.actual === 'number'
-            ? r.actual
-            : typeof r.actualInformal === 'number'
-            ? r.actualInformal
-            : typeof r.actualFormal === 'number'
-            ? r.actualFormal
-            : 0;
-        const p =
-          typeof r.predictedProb === 'number'
-            ? r.predictedProb
-            : typeof r.prob === 'number'
-            ? r.prob
-            : 0;
-        const pred = p >= threshold ? 1 : 0;
-        if (pred === 1 && y === 1) tp++;
-        else if (pred === 1 && y === 0) fp++;
-        else if (pred === 0 && y === 0) tn++;
-        else fn++;
-      }
-      const total = tp + fp + tn + fn || 1;
-      const accuracy = (tp + tn) / total;
-      const precision = tp + fp > 0 ? tp / (tp + fp) : 0;
-      const recall = tp + fn > 0 ? tp / (tp + fn) : 0;
-      const specificity = tn + fp > 0 ? tn / (tn + fp) : 0;
-      const f1 = precision + recall > 0 ? (2 * precision * recall) / (precision + recall) : 0;
-      return {
-        tp,
-        fp,
-        tn,
-        fn,
-        accuracy,
-        precision,
-        recall,
-        specificity,
-        f1,
-        auc:
-          lockedTestData.metrics?.auc ??
-          lockedTestData.metrics?.rocAuc ??
-          modelParams.metrics?.auc ??
-          modelParams.metrics?.rocAuc,
-      };
-    }
-
-    if (thresholdCurve.length > 0) {
-      let closest = thresholdCurve[0];
-      for (const pt of thresholdCurve) {
-        if (Math.abs(pt.threshold - threshold) < Math.abs(closest.threshold - threshold)) {
-          closest = pt;
-        }
-      }
-      return {
-        tp: lockedTestData.metrics?.tp,
-        fp: lockedTestData.metrics?.fp,
-        tn: lockedTestData.metrics?.tn,
-        fn: lockedTestData.metrics?.fn,
-        accuracy: closest.accuracy ?? lockedTestData.metrics?.accuracy,
-        precision: closest.precision ?? lockedTestData.metrics?.precision,
-        recall: closest.recall ?? closest.tpr ?? lockedTestData.metrics?.recall,
-        specificity: closest.specificity ?? (closest.fpr !== undefined ? 1 - closest.fpr : undefined),
-        f1: closest.f1 ?? lockedTestData.metrics?.f1,
-        auc:
-          lockedTestData.metrics?.auc ??
-          lockedTestData.metrics?.rocAuc ??
-          modelParams.metrics?.auc ??
-          modelParams.metrics?.rocAuc,
-      };
-    }
-
-    return {
-      tp: lockedTestData.metrics?.tp,
-      fp: lockedTestData.metrics?.fp,
-      tn: lockedTestData.metrics?.tn,
-      fn: lockedTestData.metrics?.fn,
-      accuracy: lockedTestData.metrics?.accuracy ?? modelParams.metrics?.accuracy,
-      precision: lockedTestData.metrics?.precision ?? modelParams.metrics?.precision,
-      recall: lockedTestData.metrics?.recall ?? modelParams.metrics?.recall,
-      specificity: undefined,
-      f1: lockedTestData.metrics?.f1 ?? modelParams.metrics?.f1,
-      auc:
-        lockedTestData.metrics?.auc ??
-        lockedTestData.metrics?.rocAuc ??
-        modelParams.metrics?.auc ??
-        modelParams.metrics?.rocAuc,
-    };
-  }, [testRecords, threshold, thresholdCurve]);
-
-  const rocData = useMemo(() => {
-    if (Array.isArray(lockedTestData.rocCurve) && lockedTestData.rocCurve.length > 0) {
-      return lockedTestData.rocCurve;
-    }
-    if (thresholdCurve.length > 0) {
-      const pts = thresholdCurve
-        .filter((d) => typeof d.fpr === 'number' && typeof d.tpr === 'number')
-        .map((d) => ({
-          fpr: Number((d.fpr as number).toFixed(4)),
-          tpr: Number((d.tpr as number).toFixed(4)),
-          threshold: d.threshold,
-        }))
-        .sort((a, b) => a.fpr - b.fpr);
-      return [{ fpr: 0, tpr: 0, threshold: 1 }, ...pts, { fpr: 1, tpr: 1, threshold: 0 }];
-    }
-    return [];
-  }, [thresholdCurve]);
-
-  const calibrationData = useMemo<CalibrationBin[]>(() => {
-    if (Array.isArray(lockedTestData.calibration) && lockedTestData.calibration.length > 0) {
-      return lockedTestData.calibration;
-    }
-    if (Array.isArray(lockedTestData.summaryByDecile) && lockedTestData.summaryByDecile.length > 0) {
-      return lockedTestData.summaryByDecile.map((row, idx) => ({
-        bin: String(row.decile ?? row.bin ?? `D${idx + 1}`),
-        meanPredicted: Number(row.meanPredicted ?? row.avgPred ?? row.predicted ?? 0),
-        observedRate: Number(row.observedRate ?? row.actualRate ?? row.observed ?? 0),
-        count: Number(row.count ?? row.n ?? 0),
-      }));
-    }
-    if (testRecords.length === 0) return [];
-
-    const sorted = [...testRecords].sort((a, b) => {
-      const pa = typeof a.predictedProb === 'number' ? a.predictedProb : Number(a.prob ?? 0);
-      const pb = typeof b.predictedProb === 'number' ? b.predictedProb : Number(b.prob ?? 0);
-      return pa - pb;
+  // Build coefficient lookup map from ech_model_params.json
+  const coefMap = useMemo(() => {
+    const map: Record<string, number> = {};
+    (modelParams.coefficients as CoefficientRow[]).forEach((row) => {
+      map[row.term] = row.estimate;
     });
-    const bins: CalibrationBin[] = [];
-    const nBins = 10;
-    for (let i = 0; i < nBins; i++) {
-      const start = Math.floor((i * sorted.length) / nBins);
-      const end = Math.floor(((i + 1) * sorted.length) / nBins);
-      const slice = sorted.slice(start, end);
-      if (slice.length === 0) continue;
-      let sumP = 0;
-      let sumY = 0;
-      for (const r of slice) {
-        sumP += typeof r.predictedProb === 'number' ? r.predictedProb : Number(r.prob ?? 0);
-        const y =
-          typeof r.actual === 'number'
-            ? r.actual
-            : typeof r.actualInformal === 'number'
-            ? r.actualInformal
-            : Number(r.actualFormal ?? 0);
-        sumY += y;
-      }
-      bins.push({
-        bin: `D${i + 1}`,
-        meanPredicted: Number((sumP / slice.length).toFixed(4)),
-        observedRate: Number((sumY / slice.length).toFixed(4)),
-        count: slice.length,
-      });
-    }
-    return bins;
-  }, [testRecords]);
-
-  const groupRows = useMemo<GroupSummaryRow[]>(() => {
-    if (Array.isArray(trainSummary.byGroup) && trainSummary.byGroup.length > 0) {
-      return trainSummary.byGroup;
-    }
-    const merged: GroupSummaryRow[] = [];
-    if (Array.isArray(trainSummary.byEducation)) {
-      for (const r of trainSummary.byEducation) merged.push({ ...r, group: r.group || 'Educación' });
-    }
-    if (Array.isArray(trainSummary.byDepartment)) {
-      for (const r of trainSummary.byDepartment)
-        merged.push({ ...r, group: r.group || 'Departamento' });
-    }
-    if (Array.isArray(trainSummary.byAgeGroup)) {
-      for (const r of trainSummary.byAgeGroup) merged.push({ ...r, group: r.group || 'Edad' });
-    }
-    return merged;
+    return map;
   }, []);
 
-  const filteredFeatures = useMemo(() => {
-    const q = featureSearch.trim().toLowerCase();
-    const list = q
-      ? normalizedFeatures.filter(
-          (f) =>
-            f.name.toLowerCase().includes(q) ||
-            (f.label && f.label.toLowerCase().includes(q)) ||
-            (f.category && f.category.toLowerCase().includes(q))
-        )
-      : [...normalizedFeatures];
+  // Predict P(is_formal = 1 | x) using exact trained logistic parameters
+  const predictProbability = useMemo(() => {
+    return (params: {
+      fs: string;
+      occ: string;
+      age: number;
+      edu: number;
+      hh: number;
+      pi: number;
+      pm: number;
+    }) => {
+      let z = coefMap['(Intercept)'] ?? 0;
 
-    if (sortByAbsCoef) {
-      list.sort((a, b) => Math.abs(b.coef) - Math.abs(a.coef));
-    }
-    return list;
-  }, [normalizedFeatures, featureSearch, sortByAbsCoef]);
+      if (params.fs !== '1_person') {
+        const fsKey = `firm_size${params.fs}`;
+        z += coefMap[fsKey] ?? 0;
+      }
 
-  const topChartFeatures = useMemo(() => {
-    return [...normalizedFeatures]
-      .sort((a, b) => Math.abs(b.coef) - Math.abs(a.coef))
-      .slice(0, 15)
-      .map((f) => ({
-        name: (f.label || f.name).slice(0, 28),
-        fullName: f.label || f.name,
-        coef: Number(f.coef.toFixed(4)),
-        oddsRatio: Number((f.oddsRatio ?? Math.exp(f.coef)).toFixed(4)),
-      }));
-  }, [normalizedFeatures]);
+      // Match training coding: Public Employee uses Private Wage Worker baseline in occ_for_model
+      const occModel =
+        params.occ === 'Public Employee' ? 'Private Wage Worker' : params.occ;
+      if (occModel !== 'Private Wage Worker') {
+        const occKey = `occ_for_model${occModel}`;
+        z += coefMap[occKey] ?? 0;
+      }
 
-  const simulationResult = useMemo(() => {
-    let linearPredictor = interceptValue;
-    const contributions: Array<{ name: string; label: string; value: number; contribution: number }> =
-      [];
+      z += (coefMap['age'] ?? 0) * params.age;
+      z += (coefMap['education'] ?? 0) * params.edu;
+      z += (coefMap['household_size'] ?? 0) * params.hh;
+      z += (coefMap['is_poor_income'] ?? 0) * params.pi;
+      z += (coefMap['is_poor_multi'] ?? 0) * params.pm;
 
-    for (const f of normalizedFeatures) {
-      const val = typeof simInputs[f.name] === 'number' ? simInputs[f.name] : 0;
-      const contrib = f.coef * val;
-      linearPredictor += contrib;
-      contributions.push({
-        name: f.name,
-        label: f.label || f.name,
-        value: val,
-        contribution: contrib,
-      });
-    }
-
-    const probability = sigmoid(linearPredictor);
-    const predictedClass = probability >= threshold ? 1 : 0;
-    contributions.sort((a, b) => Math.abs(b.contribution) - Math.abs(a.contribution));
-
-    return {
-      linearPredictor,
-      probability,
-      predictedClass,
-      contributions,
+      return { logOdds: z, prob: sigmoid(z) };
     };
-  }, [interceptValue, normalizedFeatures, simInputs, threshold]);
+  }, [coefMap]);
 
-  const handleResetSimulator = () => {
-    const reset: Record<string, number> = {};
-    for (const f of normalizedFeatures) {
-      reset[f.name] = typeof f.mean === 'number' ? f.mean : 0;
+  // Live calculator output
+  const livePrediction = useMemo(() => {
+    return predictProbability({
+      fs: calcFirmSize,
+      occ: calcOccupation,
+      age: calcAge,
+      edu: calcEducation,
+      hh: calcHouseholdSize,
+      pi: calcPoorIncome ? 1 : 0,
+      pm: calcPoorMulti ? 1 : 0,
+    });
+  }, [
+    predictProbability,
+    calcFirmSize,
+    calcOccupation,
+    calcAge,
+    calcEducation,
+    calcHouseholdSize,
+    calcPoorIncome,
+    calcPoorMulti,
+  ]);
+
+  // Format training charts data
+  const trainCalibrationData = useMemo(() => {
+    return (trainSummary.calibration_bins as CalibrationBin[]).map((b) => ({
+      ...b,
+      predictedPct: Number((b.mean_pred * 100).toFixed(1)),
+      observedPct: Number((b.observed_rate * 100).toFixed(1)),
+    }));
+  }, []);
+
+  const trainFirmData = useMemo(() => {
+    return (trainSummary.by_firm_size as FirmSummaryRow[]).map((f) => ({
+      ...f,
+      label: FIRM_SIZE_LABELS[f.firm_size] ?? f.firm_size,
+      observedPct: Number((f.observed_rate * 100).toFixed(1)),
+      predictedPct: Number((f.mean_pred * 100).toFixed(1)),
+    }));
+  }, []);
+
+  const trainPovertyData = useMemo(() => {
+    return (trainSummary.by_poverty as PovertySummaryRow[]).map((p) => {
+      let label = 'Neither Poor';
+      if (p.is_poor_income === 1 && p.is_poor_multi === 1) {
+        label = 'Income + Multidim. Poor';
+      } else if (p.is_poor_income === 1) {
+        label = 'Income Poor Only';
+      } else if (p.is_poor_multi === 1) {
+        label = 'Multidim. Poor Only';
+      }
+      return {
+        ...p,
+        label,
+        observedPct: Number((p.observed_rate * 100).toFixed(1)),
+        predictedPct: Number((p.mean_pred * 100).toFixed(1)),
+      };
+    });
+  }, []);
+
+  // One-time unlock handler for ech_locked_test.json
+  const handleUnlockLockedTest = () => {
+    if (testUnlocked) return;
+
+    const rows = lockedTestData as LockedTestRow[];
+    const yArr: number[] = [];
+    const pArr: number[] = [];
+
+    const binBuckets: Record<
+      number,
+      { bin: number; bin_label: string; n: number; sumP: number; sumY: number }
+    > = {};
+    for (let b = 1; b <= 10; b++) {
+      binBuckets[b] = {
+        bin: b,
+        bin_label: `${(b - 1) * 10}-${b * 10}%`,
+        n: 0,
+        sumP: 0,
+        sumY: 0,
+      };
     }
-    setSimInputs(reset);
+
+    const firmBuckets: Record<
+      string,
+      { firm_size: string; n: number; sumP: number; sumY: number }
+    > = {};
+
+    const povBuckets: Record<
+      string,
+      { label: string; n: number; sumP: number; sumY: number }
+    > = {};
+
+    rows.forEach((row) => {
+      const { prob } = predictProbability({
+        fs: row.fs,
+        occ: row.occ,
+        age: row.age,
+        edu: row.edu,
+        hh: row.hh,
+        pi: row.pi,
+        pm: row.pm,
+      });
+
+      yArr.push(row.y);
+      pArr.push(prob);
+
+      const binIdx = Math.min(Math.floor(prob * 10) + 1, 10);
+      binBuckets[binIdx].n += 1;
+      binBuckets[binIdx].sumP += prob;
+      binBuckets[binIdx].sumY += row.y;
+
+      if (!firmBuckets[row.fs]) {
+        firmBuckets[row.fs] = { firm_size: row.fs, n: 0, sumP: 0, sumY: 0 };
+      }
+      firmBuckets[row.fs].n += 1;
+      firmBuckets[row.fs].sumP += prob;
+      firmBuckets[row.fs].sumY += row.y;
+
+      let povLabel = 'Neither Poor';
+      if (row.pi === 1 && row.pm === 1) povLabel = 'Income + Multidim. Poor';
+      else if (row.pi === 1) povLabel = 'Income Poor Only';
+      else if (row.pm === 1) povLabel = 'Multidim. Poor Only';
+
+      if (!povBuckets[povLabel]) {
+        povBuckets[povLabel] = { label: povLabel, n: 0, sumP: 0, sumY: 0 };
+      }
+      povBuckets[povLabel].n += 1;
+      povBuckets[povLabel].sumP += prob;
+      povBuckets[povLabel].sumY += row.y;
+    });
+
+    const nTest = yArr.length;
+    const observedFormalityRate = yArr.reduce((a, b) => a + b, 0) / nTest;
+    const meanPredictedProb = pArr.reduce((a, b) => a + b, 0) / nTest;
+    const testLog10Score = calcLog10Score(yArr, pArr);
+    const testAvgLog10Score = testLog10Score / nTest;
+
+    // Compare against training base rate baseline (no peeking at test labels)
+    const trainBaseRate = modelParams.train_base_rate;
+    const nullProbs = new Array(nTest).fill(trainBaseRate);
+    const nullLog10Score = calcLog10Score(yArr, nullProbs);
+    const nullAvgLog10Score = nullLog10Score / nTest;
+
+    const calibrationBins: CalibrationBin[] = Object.values(binBuckets)
+      .filter((b) => b.n > 0)
+      .map((b) => ({
+        bin: b.bin,
+        bin_label: b.bin_label,
+        n: b.n,
+        mean_pred: Number((b.sumP / b.n).toFixed(4)),
+        observed_rate: Number((b.sumY / b.n).toFixed(4)),
+      }));
+
+    const byFirmSize: FirmSummaryRow[] = Object.values(firmBuckets)
+      .sort(
+        (a, b) =>
+          FIRM_SIZE_ORDER.indexOf(a.firm_size) - FIRM_SIZE_ORDER.indexOf(b.firm_size)
+      )
+      .map((f) => ({
+        firm_size: f.firm_size,
+        n: f.n,
+        observed_rate: Number((f.sumY / f.n).toFixed(4)),
+        mean_pred: Number((f.sumP / f.n).toFixed(4)),
+      }));
+
+    const byPoverty = Object.values(povBuckets)
+      .sort((a, b) => POVERTY_ORDER.indexOf(a.label) - POVERTY_ORDER.indexOf(b.label))
+      .map((p) => ({
+        label: p.label,
+        n: p.n,
+        observed_rate: Number((p.sumY / p.n).toFixed(4)),
+        mean_pred: Number((p.sumP / p.n).toFixed(4)),
+      }));
+
+    setTestResults({
+      nTest,
+      observedFormalityRate,
+      meanPredictedProb,
+      testLog10Score,
+      testAvgLog10Score,
+      nullLog10Score,
+      nullAvgLog10Score,
+      scoreGainOverNull: testLog10Score - nullLog10Score,
+      calibrationBins,
+      byFirmSize,
+      byPoverty,
+    });
+    setTestUnlocked(true);
+    setConfirmUnlockModal(false);
   };
 
-  const totalTrainRows = trainSummary.nRows ?? modelParams.metrics?.nSamples;
-  const totalTestRows = lockedTestData.nRows ?? (testRecords.length > 0 ? testRecords.length : lockedTestData.metrics?.nSamples);
-  const aucScore =
-    activeThresholdMetrics.auc ??
-    lockedTestData.metrics?.auc ??
-    lockedTestData.metrics?.rocAuc ??
-    modelParams.metrics?.auc;
-
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans">
-      <header className="bg-slate-900 text-white border-b border-slate-800 shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-            <div>
-              <p className="text-xs uppercase tracking-widest text-sky-400 font-semibold">
-                Uruguay · Encuesta Continua de Hogares (ECH 2025)
-              </p>
-              <h1 className="text-2xl sm:text-3xl font-bold tracking-tight mt-1">
-                {modelParams.modelName || 'Modelo Predictivo de Formalidad / Informalidad Laboral'}
-              </h1>
-              <p className="text-sm text-slate-300 mt-1">
-                Regresión logística evaluada en conjunto de prueba bloqueado (Locked Test Set)
-              </p>
+    <div
+      style={{
+        minHeight: '100vh',
+        backgroundColor: '#f8fafc',
+        color: '#0f172a',
+        fontFamily:
+          'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+        fontSize: '16px',
+        lineHeight: 1.6,
+        padding: '24px 16px 64px',
+      }}
+    >
+      <main style={{ maxWidth: '1120px', margin: '0 auto' }}>
+        {/* Header */}
+        <header
+          style={{
+            backgroundColor: '#0f172a',
+            color: '#f8fafc',
+            borderRadius: '14px',
+            padding: '28px 32px',
+            marginBottom: '28px',
+            boxShadow: '0 4px 16px rgba(15, 23, 42, 0.12)',
+          }}
+        >
+          <p
+            style={{
+              fontSize: '16px',
+              fontWeight: 600,
+              color: '#38bdf8',
+              margin: '0 0 8px',
+              textTransform: 'uppercase',
+              letterSpacing: '0.04em',
+            }}
+          >
+            Probability for AI &bull; Stanford University &bull; Final Project &bull; Real Data ({modelParams.dataset_source})
+          </p>
+          <h1
+            style={{
+              fontSize: '30px',
+              fontWeight: 800,
+              margin: '0 0 12px',
+              lineHeight: 1.25,
+            }}
+          >
+            Predicting Worker Formality in Uruguay (ECH 2025)
+          </h1>
+          <p style={{ fontSize: '17px', color: '#e2e8f0', margin: 0 }}>
+            Estimating <InlineMath math="P(\text{is\_formal} = 1 \mid \mathbf{x})" /> across{' '}
+            <strong>{modelParams.n_total.toLocaleString()}</strong> employed workers using a
+            stratified 80% training set (<strong>{modelParams.n_train.toLocaleString()}</strong>) and
+            a sealed 20% locked test set (<strong>{modelParams.n_locked_test.toLocaleString()}</strong>
+            , seed = {modelParams.split_seed}).
+          </p>
+        </header>
+
+        {/* Section 1: Generative Story & Probability Model */}
+        <section
+          aria-labelledby="model-story-heading"
+          style={{
+            backgroundColor: '#ffffff',
+            border: '1px solid #cbd5e1',
+            borderRadius: '12px',
+            padding: '24px 28px',
+            marginBottom: '28px',
+          }}
+        >
+          <h2
+            id="model-story-heading"
+            style={{ fontSize: '22px', fontWeight: 700, marginTop: 0, marginBottom: '12px' }}
+          >
+            1. Generative Story &amp; Logistic Probability Model
+          </h2>
+          <p style={{ fontSize: '16px', marginTop: 0 }}>
+            Each employed worker <InlineMath math="i" /> in Uruguay has a binary social-security
+            registration outcome <InlineMath math="Y_i \in \{0, 1\}" /> (where{' '}
+            <InlineMath math="Y_i = 1" /> means formal registration in BPS/pension coverage,{' '}
+            <code>f82 == 1</code>). We model <InlineMath math="Y_i" /> as a Bernoulli random
+            variable whose probability <InlineMath math="p_i" /> is determined on the log-odds
+            scale by workplace structure, occupation, human capital, and household poverty:
+          </p>
+          <div
+            style={{
+              backgroundColor: '#f1f5f9',
+              borderRadius: '8px',
+              padding: '16px',
+              margin: '16px 0',
+              overflowX: 'auto',
+            }}
+          >
+            <BlockMath
+              math={
+                'Y_i \\sim \\text{Bernoulli}(p_i), \\qquad \\log\\!\\left(\\frac{p_i}{1 - p_i}\\right) = \\beta_0 + \\mathbf{x}_{\\text{firm},i}^{\\top}\\boldsymbol{\\beta}_{\\text{firm}} + \\mathbf{x}_{\\text{occ},i}^{\\top}\\boldsymbol{\\beta}_{\\text{occ}} + \\beta_{\\text{age}}\\text{Age}_i + \\beta_{\\text{edu}}\\text{Edu}_i + \\beta_{\\text{hh}}\\text{HH}_i + \\beta_{\\text{pi}}\\text{PoorInc}_i + \\beta_{\\text{pm}}\\text{PoorMulti}_i'
+              }
+            />
+          </div>
+
+          {/* Training Score KPI Cards */}
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+              gap: '16px',
+              marginTop: '20px',
+            }}
+          >
+            <div
+              style={{
+                backgroundColor: '#f8fafc',
+                border: '1px solid #cbd5e1',
+                borderRadius: '10px',
+                padding: '16px',
+              }}
+            >
+              <div style={{ fontSize: '16px', color: '#475569', fontWeight: 600 }}>
+                Training Base Rate
+              </div>
+              <div style={{ fontSize: '26px', fontWeight: 800, color: '#0f172a' }}>
+                {(modelParams.train_base_rate * 100).toFixed(2)}%
+              </div>
+              <div style={{ fontSize: '16px', color: '#475569' }}>
+                n = {modelParams.n_train.toLocaleString()} workers
+              </div>
             </div>
-            <div className="flex flex-wrap gap-3 text-xs">
-              <div className="bg-slate-800/90 border border-slate-700 rounded-lg px-3.5 py-2">
-                <span className="text-slate-400 block">Muestra Entrenamiento</span>
-                <span className="text-base font-semibold text-white">
-                  {formatInt(totalTrainRows)}
-                </span>
+
+            <div
+              style={{
+                backgroundColor: '#eff6ff',
+                border: '1px solid #93c5fd',
+                borderRadius: '10px',
+                padding: '16px',
+              }}
+            >
+              <div style={{ fontSize: '16px', color: '#1e40af', fontWeight: 600 }}>
+                Training Score (<InlineMath math="\log_{10} L" />)
               </div>
-              <div className="bg-slate-800/90 border border-slate-700 rounded-lg px-3.5 py-2">
-                <span className="text-slate-400 block">Locked Test Set</span>
-                <span className="text-base font-semibold text-white">
-                  {formatInt(totalTestRows)}
-                </span>
+              <div style={{ fontSize: '26px', fontWeight: 800, color: '#1d4ed8' }}>
+                {modelParams.train_log10_score.toLocaleString()}
               </div>
-              <div className="bg-slate-800/90 border border-slate-700 rounded-lg px-3.5 py-2">
-                <span className="text-slate-400 block">ROC-AUC (Test)</span>
-                <span className="text-base font-semibold text-emerald-400">
-                  {formatNum(aucScore, 4)}
-                </span>
+              <div style={{ fontSize: '16px', color: '#1e3a8a' }}>
+                Avg: {modelParams.train_avg_log10_score.toFixed(4)} / worker
+              </div>
+            </div>
+
+            <div
+              style={{
+                backgroundColor: '#f8fafc',
+                border: '1px solid #cbd5e1',
+                borderRadius: '10px',
+                padding: '16px',
+              }}
+            >
+              <div style={{ fontSize: '16px', color: '#475569', fontWeight: 600 }}>
+                Baseline Null Score (<InlineMath math="\log_{10} L_0" />)
+              </div>
+              <div style={{ fontSize: '26px', fontWeight: 800, color: '#334155' }}>
+                {modelParams.train_null_log10_score.toLocaleString()}
+              </div>
+              <div style={{ fontSize: '16px', color: '#475569' }}>
+                Constant p = {(modelParams.train_base_rate * 100).toFixed(2)}%
+              </div>
+            </div>
+
+            <div
+              style={{
+                backgroundColor: '#ecfdf5',
+                border: '1px solid #6ee7b7',
+                borderRadius: '10px',
+                padding: '16px',
+              }}
+            >
+              <div style={{ fontSize: '16px', color: '#065f46', fontWeight: 600 }}>
+                Training Score Gain
+              </div>
+              <div style={{ fontSize: '26px', fontWeight: 800, color: '#047857' }}>
+                +{(modelParams.train_log10_score - modelParams.train_null_log10_score).toFixed(2)}
+              </div>
+              <div style={{ fontSize: '16px', color: '#065f46' }}>
+                Higher <InlineMath math="\log_{10}" /> likelihood is better
               </div>
             </div>
           </div>
+        </section>
 
-          <nav className="flex flex-wrap gap-2 mt-6 pt-4 border-t border-slate-800">
-            {[
-              { id: 'overview', label: '1. Resumen y Datos ECH' },
-              { id: 'coefficients', label: '2. Coeficientes y Odds Ratios' },
-              { id: 'evaluation', label: '3. Evaluación Locked Test' },
-              { id: 'simulator', label: '4. Simulador Interactivo' },
-              { id: 'methodology', label: '5. Formulación Matemática' },
-            ].map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => setActiveTab(tab.id as TabKey)}
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                  activeTab === tab.id
-                    ? 'bg-sky-500 text-white shadow-sm'
-                    : 'bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white'
-                }`}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </nav>
-        </div>
-      </header>
+        {/* Section 2: Interactive Worker Probability Calculator */}
+        <section
+          aria-labelledby="calculator-heading"
+          style={{
+            backgroundColor: '#ffffff',
+            border: '1px solid #cbd5e1',
+            borderRadius: '12px',
+            padding: '24px 28px',
+            marginBottom: '28px',
+          }}
+        >
+          <h2
+            id="calculator-heading"
+            style={{ fontSize: '22px', fontWeight: 700, marginTop: 0, marginBottom: '12px' }}
+          >
+            2. Interactive Worker Formality Calculator (Trained Parameters)
+          </h2>
+          <p style={{ fontSize: '16px', marginTop: 0, marginBottom: '20px' }}>
+            Adjust a worker&apos;s workplace and socioeconomic attributes to compute their predicted
+            probability of formal employment <InlineMath math="P(\text{is\_formal} = 1 \mid \mathbf{x})" />{' '}
+            directly from the parameters fitted on the 80% training set.
+          </p>
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
-        {activeTab === 'overview' && (
-          <section className="space-y-6">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm">
-                <p className="text-xs font-medium uppercase tracking-wider text-slate-500">
-                  Observaciones Train
-                </p>
-                <p className="text-2xl font-bold text-slate-900 mt-1">
-                  {formatInt(totalTrainRows)}
-                </p>
-                <p className="text-xs text-slate-500 mt-1">
-                  Variables activas: {normalizedFeatures.length}
-                </p>
-              </div>
-              <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm">
-                <p className="text-xs font-medium uppercase tracking-wider text-slate-500">
-                  Tasa Base (Train)
-                </p>
-                <p className="text-2xl font-bold text-sky-700 mt-1">
-                  {formatPct(
-                    trainSummary.informalityRate ??
-                      trainSummary.formalityRate ??
-                      trainSummary.metrics?.positiveRate
-                  )}
-                </p>
-                <p className="text-xs text-slate-500 mt-1">Prevalencia de clase positiva</p>
-              </div>
-              <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm">
-                <p className="text-xs font-medium uppercase tracking-wider text-slate-500">
-                  ROC-AUC (Locked Test)
-                </p>
-                <p className="text-2xl font-bold text-emerald-700 mt-1">
-                  {formatNum(aucScore, 4)}
-                </p>
-                <p className="text-xs text-slate-500 mt-1">Capacidad discriminativa fuera de muestra</p>
-              </div>
-              <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm">
-                <p className="text-xs font-medium uppercase tracking-wider text-slate-500">
-                  Accuracy (Umbral {threshold.toFixed(2)})
-                </p>
-                <p className="text-2xl font-bold text-slate-900 mt-1">
-                  {formatPct(activeThresholdMetrics.accuracy)}
-                </p>
-                <p className="text-xs text-slate-500 mt-1">
-                  F1-Score: {formatNum(activeThresholdMetrics.f1, 3)}
-                </p>
-              </div>
-            </div>
-
-            {groupRows.length > 0 && (
-              <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
-                <h2 className="text-lg font-semibold text-slate-900">
-                  Distribución por Subgrupos en Entrenamiento (ECH 2025)
-                </h2>
-                <p className="text-sm text-slate-600 mt-1 mb-4">
-                  Comparación de tasas observadas y probabilidades medias predichas por segmento.
-                </p>
-                <div className="h-80 w-full">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart
-                      data={groupRows.slice(0, 14).map((r) => ({
-                        name: String(r.subGroup || r.group),
-                        observada: Number(
-                          ((r.informalityRate ?? r.formalityRate ?? 0) * 100).toFixed(2)
-                        ),
-                        predicha: Number(((r.avgPredictedProb ?? 0) * 100).toFixed(2)),
-                      }))}
-                      margin={{ top: 10, right: 20, left: 0, bottom: 40 }}
-                    >
-                      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                      <XAxis dataKey="name" angle={-25} textAnchor="end" interval={0} height={60} tick={{ fontSize: 11 }} />
-                      <YAxis unit="%" tick={{ fontSize: 12 }} />
-                      <Tooltip />
-                      <Legend />
-                      <Bar dataKey="observada" name="Tasa Observada (%)" fill="#0284c7" radius={[4, 4, 0, 0]} />
-                      <Bar dataKey="predicha" name="Prob. Media Predicha (%)" fill="#10b981" radius={[4, 4, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-            )}
-
-            <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
-              <h2 className="text-lg font-semibold text-slate-900">
-                Principales Predictores del Modelo (Top 15 por magnitud de <InlineMath math="|\beta_j|" />)
-              </h2>
-              <p className="text-sm text-slate-600 mt-1 mb-4">
-                Coeficientes log-odds estimados en <code className="text-xs bg-slate-100 px-1.5 py-0.5 rounded">ech_model_params.json</code>.
-              </p>
-              <div className="h-96 w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart
-                    data={topChartFeatures}
-                    layout="vertical"
-                    margin={{ top: 5, right: 30, left: 140, bottom: 5 }}
-                  >
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                    <XAxis type="number" tick={{ fontSize: 12 }} />
-                    <YAxis type="category" dataKey="name" width={135} tick={{ fontSize: 11 }} />
-                    <Tooltip />
-                    <ReferenceLine x={0} stroke="#64748b" />
-                    <Bar dataKey="coef" name="Coeficiente (β)" fill="#0f172a" radius={[0, 4, 4, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-          </section>
-        )}
-
-        {activeTab === 'coefficients' && (
-          <section className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+              gap: '20px',
+              alignItems: 'start',
+            }}
+          >
+            {/* Controls Column */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               <div>
-                <h2 className="text-lg font-semibold text-slate-900">
-                  Tabla Completa de Parámetros (<InlineMath math="\beta_0 =" /> {formatNum(interceptValue, 4)})
-                </h2>
-                <p className="text-sm text-slate-600">
-                  Coeficientes log-odds y razones de momios (<InlineMath math="OR = e^{\beta_j}" />).
-                </p>
+                <label
+                  htmlFor="calc-firm-size"
+                  style={{ display: 'block', fontWeight: 600, fontSize: '16px', marginBottom: '6px' }}
+                >
+                  Firm Size / Sector
+                </label>
+                <select
+                  id="calc-firm-size"
+                  value={calcFirmSize}
+                  onChange={(e) => setCalcFirmSize(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '10px 12px',
+                    fontSize: '16px',
+                    borderRadius: '8px',
+                    border: '1px solid #94a3b8',
+                    backgroundColor: '#ffffff',
+                  }}
+                >
+                  {Object.entries(FIRM_SIZE_LABELS).map(([val, label]) => (
+                    <option key={val} value={val}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
               </div>
-              <div className="flex flex-wrap items-center gap-3">
+
+              <div>
+                <label
+                  htmlFor="calc-occupation"
+                  style={{ display: 'block', fontWeight: 600, fontSize: '16px', marginBottom: '6px' }}
+                >
+                  Occupation Category
+                </label>
+                <select
+                  id="calc-occupation"
+                  value={calcOccupation}
+                  onChange={(e) => setCalcOccupation(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '10px 12px',
+                    fontSize: '16px',
+                    borderRadius: '8px',
+                    border: '1px solid #94a3b8',
+                    backgroundColor: '#ffffff',
+                  }}
+                >
+                  <option value="Private Wage Worker">Private Wage Worker</option>
+                  <option value="Public Employee">Public Employee</option>
+                  <option value="Self-Employed">Self-Employed</option>
+                  <option value="Other">Other</option>
+                </select>
+              </div>
+
+              <div>
+                <label
+                  htmlFor="calc-age"
+                  style={{ display: 'block', fontWeight: 600, fontSize: '16px', marginBottom: '6px' }}
+                >
+                  Age: <strong>{calcAge} years</strong>
+                </label>
                 <input
-                  type="text"
-                  value={featureSearch}
-                  onChange={(e) => setFeatureSearch(e.target.value)}
-                  placeholder="Filtrar variable..."
-                  className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
+                  id="calc-age"
+                  type="range"
+                  min={14}
+                  max={80}
+                  value={calcAge}
+                  onChange={(e) => setCalcAge(Number(e.target.value))}
+                  style={{ width: '100%', accentColor: '#1d4ed8', cursor: 'pointer' }}
                 />
-                <label className="inline-flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
+              </div>
+
+              <div>
+                <label
+                  htmlFor="calc-edu"
+                  style={{ display: 'block', fontWeight: 600, fontSize: '16px', marginBottom: '6px' }}
+                >
+                  Education Level Code (<code>e51_2</code>): <strong>{calcEducation}</strong>
+                </label>
+                <input
+                  id="calc-edu"
+                  type="range"
+                  min={0}
+                  max={10}
+                  value={calcEducation}
+                  onChange={(e) => setCalcEducation(Number(e.target.value))}
+                  style={{ width: '100%', accentColor: '#1d4ed8', cursor: 'pointer' }}
+                />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="calc-hh"
+                  style={{ display: 'block', fontWeight: 600, fontSize: '16px', marginBottom: '6px' }}
+                >
+                  Household Size (<code>HT19</code>): <strong>{calcHouseholdSize} members</strong>
+                </label>
+                <input
+                  id="calc-hh"
+                  type="range"
+                  min={1}
+                  max={12}
+                  value={calcHouseholdSize}
+                  onChange={(e) => setCalcHouseholdSize(Number(e.target.value))}
+                  style={{ width: '100%', accentColor: '#1d4ed8', cursor: 'pointer' }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', paddingTop: '4px' }}>
+                <label
+                  htmlFor="calc-poor-inc"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px',
+                    fontSize: '16px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
                   <input
+                    id="calc-poor-inc"
                     type="checkbox"
-                    checked={sortByAbsCoef}
-                    onChange={(e) => setSortByAbsCoef(e.target.checked)}
-                    className="rounded border-slate-300 text-sky-600 focus:ring-sky-500"
+                    checked={calcPoorIncome}
+                    onChange={(e) => setCalcPoorIncome(e.target.checked)}
+                    style={{ width: '20px', height: '20px', accentColor: '#1d4ed8' }}
                   />
-                  Ordenar por magnitud
+                  Income Poverty (<code>pobre17 == 1</code>)
+                </label>
+
+                <label
+                  htmlFor="calc-poor-multi"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px',
+                    fontSize: '16px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  <input
+                    id="calc-poor-multi"
+                    type="checkbox"
+                    checked={calcPoorMulti}
+                    onChange={(e) => setCalcPoorMulti(e.target.checked)}
+                    style={{ width: '20px', height: '20px', accentColor: '#1d4ed8' }}
+                  />
+                  Multidimensional Poverty (<code>pobre_multi == 1</code>)
                 </label>
               </div>
             </div>
 
-            <div className="overflow-x-auto border border-slate-200 rounded-lg">
-              <table className="min-w-full divide-y divide-slate-200 text-sm">
-                <thead className="bg-slate-100 text-slate-700">
-                  <tr>
-                    <th className="px-4 py-3 text-left font-semibold">Variable</th>
-                    <th className="px-4 py-3 text-right font-semibold">Coeficiente (β)</th>
-                    <th className="px-4 py-3 text-right font-semibold">Odds Ratio (e^β)</th>
-                    <th className="px-4 py-3 text-right font-semibold">Error Estándar</th>
-                    <th className="px-4 py-3 text-right font-semibold">p-valor</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-200 bg-white">
-                  <tr className="bg-slate-50/70 font-medium">
-                    <td className="px-4 py-2.5 text-slate-800">(Intercepto)</td>
-                    <td className="px-4 py-2.5 text-right font-mono">{formatNum(interceptValue, 4)}</td>
-                    <td className="px-4 py-2.5 text-right font-mono">{formatNum(Math.exp(interceptValue), 4)}</td>
-                    <td className="px-4 py-2.5 text-right font-mono">—</td>
-                    <td className="px-4 py-2.5 text-right font-mono">—</td>
-                  </tr>
-                  {filteredFeatures.map((feat) => (
-                    <tr key={feat.name} className="hover:bg-slate-50">
-                      <td className="px-4 py-2.5">
-                        <div className="font-medium text-slate-900">{feat.label || feat.name}</div>
-                        {feat.label && feat.label !== feat.name && (
-                          <div className="text-xs text-slate-400 font-mono">{feat.name}</div>
-                        )}
-                      </td>
-                      <td
-                        className={`px-4 py-2.5 text-right font-mono font-semibold ${
-                          feat.coef >= 0 ? 'text-sky-700' : 'text-amber-700'
-                        }`}
-                      >
-                        {feat.coef >= 0 ? `+${feat.coef.toFixed(4)}` : feat.coef.toFixed(4)}
-                      </td>
-                      <td className="px-4 py-2.5 text-right font-mono">
-                        {formatNum(feat.oddsRatio ?? Math.exp(feat.coef), 4)}
-                      </td>
-                      <td className="px-4 py-2.5 text-right font-mono text-slate-600">
-                        {formatNum(feat.stdError, 4)}
-                      </td>
-                      <td className="px-4 py-2.5 text-right font-mono text-slate-600">
-                        {typeof feat.pValue === 'number'
-                          ? feat.pValue < 0.001
-                            ? '< 0.001'
-                            : feat.pValue.toFixed(4)
-                          : '—'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        )}
+            {/* Live Probability Output Card */}
+            <div
+              role="region"
+              aria-live="polite"
+              style={{
+                backgroundColor: '#0f172a',
+                color: '#f8fafc',
+                borderRadius: '12px',
+                padding: '24px',
+              }}
+            >
+              <div style={{ fontSize: '16px', color: '#94a3b8', fontWeight: 600 }}>
+                Predicted Probability of Formal Employment
+              </div>
+              <div
+                style={{
+                  fontSize: '44px',
+                  fontWeight: 800,
+                  color: livePrediction.prob >= 0.5 ? '#34d399' : '#fbbf24',
+                  margin: '8px 0',
+                }}
+              >
+                {(livePrediction.prob * 100).toFixed(1)}%
+              </div>
+              <p style={{ fontSize: '16px', color: '#cbd5e1', margin: '0 0 16px' }}>
+                Log-odds <InlineMath math="z" /> ={' '}
+                <strong>{livePrediction.logOdds.toFixed(4)}</strong> &bull; Odds ={' '}
+                <strong>{Math.exp(livePrediction.logOdds).toFixed(3)}</strong>
+              </p>
 
-        {activeTab === 'evaluation' && (
-          <section className="space-y-6">
-            <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
-              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-                <div>
-                  <h2 className="text-lg font-semibold text-slate-900">
-                    Sensibilidad al Umbral de Decisión (<InlineMath math="\tau" />)
-                  </h2>
-                  <p className="text-sm text-slate-600">
-                    Ajusta el punto de corte <InlineMath math="\hat{p}_i \ge \tau" /> sobre el conjunto de prueba bloqueado.
-                  </p>
-                </div>
-                <div className="flex items-center gap-4 bg-slate-50 border border-slate-200 rounded-lg px-4 py-2.5">
-                  <label htmlFor="threshold-slider" className="text-sm font-medium text-slate-700">
-                    Umbral <InlineMath math="\tau" />:
-                  </label>
-                  <input
-                    id="threshold-slider"
-                    type="range"
-                    min={0.05}
-                    max={0.95}
-                    step={0.01}
-                    value={threshold}
-                    onChange={(e) => setThreshold(Number(e.target.value))}
-                    className="w-40 accent-sky-600"
+              {/* Visual Probability Gauge */}
+              <div
+                style={{
+                  width: '100%',
+                  height: '18px',
+                  backgroundColor: '#334155',
+                  borderRadius: '999px',
+                  overflow: 'hidden',
+                  marginBottom: '16px',
+                }}
+              >
+                <div
+                  style={{
+                    width: `${Math.min(100, Math.max(0, livePrediction.prob * 100))}%`,
+                    height: '100%',
+                    backgroundColor: livePrediction.prob >= 0.5 ? '#10b981' : '#f59e0b',
+                    transition: 'width 0.2s ease',
+                  }}
+                />
+              </div>
+
+              <div
+                style={{
+                  backgroundColor: '#1e293b',
+                  borderRadius: '8px',
+                  padding: '14px',
+                  fontSize: '16px',
+                  color: '#e2e8f0',
+                }}
+              >
+                <strong>Interpretation:</strong> Among 100 Uruguayan workers with this exact
+                profile, our model expects roughly{' '}
+                <strong>{Math.round(livePrediction.prob * 100)}</strong> to hold formal registration
+                and <strong>{100 - Math.round(livePrediction.prob * 100)}</strong> to work
+                informally.
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* Section 3: Training-Set Calibration & Subgroup Patterns */}
+        <section
+          aria-labelledby="training-charts-heading"
+          style={{
+            backgroundColor: '#ffffff',
+            border: '1px solid #cbd5e1',
+            borderRadius: '12px',
+            padding: '24px 28px',
+            marginBottom: '28px',
+          }}
+        >
+          <h2
+            id="training-charts-heading"
+            style={{ fontSize: '22px', fontWeight: 700, marginTop: 0, marginBottom: '12px' }}
+          >
+            3. Training-Set Calibration &amp; Subgroup Patterns (n = {modelParams.n_train.toLocaleString()})
+          </h2>
+          <p style={{ fontSize: '16px', marginTop: 0, marginBottom: '24px' }}>
+            Before unlocking the test set, we verify whether predicted probabilities on the 80%
+            training set are <strong>calibrated</strong>, <strong>overconfident</strong>, or{' '}
+            <strong>underconfident</strong> across decile bins and key socioeconomic subgroups.
+          </p>
+
+          {/* Chart A: 10-Bin Calibration Curve */}
+          <div style={{ marginBottom: '36px' }}>
+            <h3 style={{ fontSize: '19px', fontWeight: 700, marginBottom: '8px' }}>
+              A. Training Calibration by Predicted Probability Decile (%)
+            </h3>
+            <div style={{ width: '100%', height: '340px' }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart
+                  data={trainCalibrationData}
+                  margin={{ top: 16, right: 24, left: 16, bottom: 24 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" stroke="#cbd5e1" />
+                  <XAxis
+                    dataKey="bin_label"
+                    tick={{ fontSize: 16, fill: '#0f172a' }}
+                    label={{
+                      value: 'Predicted Formality Probability Bin',
+                      position: 'insideBottom',
+                      offset: -14,
+                      fontSize: 16,
+                      fill: '#0f172a',
+                    }}
                   />
-                  <span className="font-mono font-bold text-sky-700 w-12 text-right">
-                    {threshold.toFixed(2)}
-                  </span>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 sm:grid-cols-5 gap-4 mt-6">
-                <div className="p-4 rounded-lg bg-slate-50 border border-slate-200">
-                  <span className="text-xs text-slate-500 block">Accuracy</span>
-                  <span className="text-xl font-bold text-slate-900">
-                    {formatPct(activeThresholdMetrics.accuracy)}
-                  </span>
-                </div>
-                <div className="p-4 rounded-lg bg-slate-50 border border-slate-200">
-                  <span className="text-xs text-slate-500 block">Precision</span>
-                  <span className="text-xl font-bold text-slate-900">
-                    {formatPct(activeThresholdMetrics.precision)}
-                  </span>
-                </div>
-                <div className="p-4 rounded-lg bg-slate-50 border border-slate-200">
-                  <span className="text-xs text-slate-500 block">Recall (TPR)</span>
-                  <span className="text-xl font-bold text-slate-900">
-                    {formatPct(activeThresholdMetrics.recall)}
-                  </span>
-                </div>
-                <div className="p-4 rounded-lg bg-slate-50 border border-slate-200">
-                  <span className="text-xs text-slate-500 block">F1-Score</span>
-                  <span className="text-xl font-bold text-sky-700">
-                    {formatNum(activeThresholdMetrics.f1, 3)}
-                  </span>
-                </div>
-                <div className="p-4 rounded-lg bg-slate-50 border border-slate-200">
-                  <span className="text-xs text-slate-500 block">ROC-AUC</span>
-                  <span className="text-xl font-bold text-emerald-700">
-                    {formatNum(activeThresholdMetrics.auc, 4)}
-                  </span>
-                </div>
-              </div>
-
-              {typeof activeThresholdMetrics.tp === 'number' && (
-                <div className="mt-6 max-w-md">
-                  <h3 className="text-sm font-semibold text-slate-800 mb-2">
-                    Matriz de Confusión (Locked Test Set)
-                  </h3>
-                  <table className="w-full text-sm border border-slate-200 rounded-lg overflow-hidden">
-                    <thead className="bg-slate-100">
-                      <tr>
-                        <th className="p-2.5 text-left border-b border-slate-200">Real \ Predicho</th>
-                        <th className="p-2.5 text-right border-b border-slate-200">Pred = 1</th>
-                        <th className="p-2.5 text-right border-b border-slate-200">Pred = 0</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr>
-                        <td className="p-2.5 font-medium border-b border-slate-200">Real = 1</td>
-                        <td className="p-2.5 text-right font-mono bg-emerald-50 text-emerald-900 font-semibold border-b border-slate-200">
-                          TP: {formatInt(activeThresholdMetrics.tp)}
-                        </td>
-                        <td className="p-2.5 text-right font-mono bg-rose-50 text-rose-900 border-b border-slate-200">
-                          FN: {formatInt(activeThresholdMetrics.fn)}
-                        </td>
-                      </tr>
-                      <tr>
-                        <td className="p-2.5 font-medium">Real = 0</td>
-                        <td className="p-2.5 text-right font-mono bg-amber-50 text-amber-900">
-                          FP: {formatInt(activeThresholdMetrics.fp)}
-                        </td>
-                        <td className="p-2.5 text-right font-mono bg-sky-50 text-sky-900 font-semibold">
-                          TN: {formatInt(activeThresholdMetrics.tn)}
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              )}
+                  <YAxis
+                    domain={[0, 100]}
+                    tick={{ fontSize: 16, fill: '#0f172a' }}
+                    label={{
+                      value: 'Formality Rate (%)',
+                      angle: -90,
+                      position: 'insideLeft',
+                      fontSize: 16,
+                      fill: '#0f172a',
+                    }}
+                  />
+                  <Tooltip contentStyle={{ fontSize: '16px' }} />
+                  <Legend wrapperStyle={{ fontSize: '16px', paddingTop: '12px' }} />
+                  <Line
+                    type="monotone"
+                    dataKey="predictedPct"
+                    name="Mean Predicted (%)"
+                    stroke="#2563eb"
+                    strokeWidth={3}
+                    dot={{ r: 5 }}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="observedPct"
+                    name="Observed Formal (%)"
+                    stroke="#059669"
+                    strokeWidth={3}
+                    dot={{ r: 5 }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
             </div>
+          </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {rocData.length > 0 && (
-                <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
-                  <h3 className="text-base font-semibold text-slate-900">
-                    Curva ROC (AUC = {formatNum(activeThresholdMetrics.auc, 4)})
-                  </h3>
-                  <p className="text-xs text-slate-500 mt-1 mb-4">
-                    Tasa de Verdaderos Positivos (TPR) vs. Falsos Positivos (FPR)
+          {/* Chart B: Formality by Firm Size */}
+          <div style={{ marginBottom: '36px' }}>
+            <h3 style={{ fontSize: '19px', fontWeight: 700, marginBottom: '8px' }}>
+              B. Training Formality Rate by Firm Size &amp; Sector (%)
+            </h3>
+            <div style={{ width: '100%', height: '360px' }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  data={trainFirmData}
+                  margin={{ top: 16, right: 24, left: 16, bottom: 48 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" stroke="#cbd5e1" />
+                  <XAxis
+                    dataKey="label"
+                    interval={0}
+                    angle={-18}
+                    textAnchor="end"
+                    tick={{ fontSize: 16, fill: '#0f172a' }}
+                  />
+                  <YAxis
+                    domain={[0, 100]}
+                    tick={{ fontSize: 16, fill: '#0f172a' }}
+                    label={{
+                      value: 'Formal Workers (%)',
+                      angle: -90,
+                      position: 'insideLeft',
+                      fontSize: 16,
+                      fill: '#0f172a',
+                    }}
+                  />
+                  <Tooltip contentStyle={{ fontSize: '16px' }} />
+                  <Legend wrapperStyle={{ fontSize: '16px', paddingTop: '24px' }} />
+                  <Bar
+                    dataKey="observedPct"
+                    name="Observed Formal (%)"
+                    fill="#0f766e"
+                    radius={[6, 6, 0, 0]}
+                  />
+                  <Bar
+                    dataKey="predictedPct"
+                    name="Mean Predicted (%)"
+                    fill="#3b82f6"
+                    radius={[6, 6, 0, 0]}
+                  />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Chart C: Formality by Poverty Subgroup */}
+          <div>
+            <h3 style={{ fontSize: '19px', fontWeight: 700, marginBottom: '8px' }}>
+              C. Training Formality Rate by Poverty Status (%)
+            </h3>
+            <div style={{ width: '100%', height: '340px' }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  data={trainPovertyData}
+                  margin={{ top: 16, right: 24, left: 16, bottom: 28 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" stroke="#cbd5e1" />
+                  <XAxis
+                    dataKey="label"
+                    interval={0}
+                    tick={{ fontSize: 16, fill: '#0f172a' }}
+                  />
+                  <YAxis
+                    domain={[0, 100]}
+                    tick={{ fontSize: 16, fill: '#0f172a' }}
+                    label={{
+                      value: 'Formal Workers (%)',
+                      angle: -90,
+                      position: 'insideLeft',
+                      fontSize: 16,
+                      fill: '#0f172a',
+                    }}
+                  />
+                  <Tooltip contentStyle={{ fontSize: '16px' }} />
+                  <Legend wrapperStyle={{ fontSize: '16px', paddingTop: '12px' }} />
+                  <Bar
+                    dataKey="observedPct"
+                    name="Observed Formal (%)"
+                    fill="#7c3aed"
+                    radius={[6, 6, 0, 0]}
+                  />
+                  <Bar
+                    dataKey="predictedPct"
+                    name="Mean Predicted (%)"
+                    fill="#38bdf8"
+                    radius={[6, 6, 0, 0]}
+                  />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </section>
+
+        {/* Section 4: Fitted Parameter Table */}
+        <section
+          aria-labelledby="params-table-heading"
+          style={{
+            backgroundColor: '#ffffff',
+            border: '1px solid #cbd5e1',
+            borderRadius: '12px',
+            padding: '24px 28px',
+            marginBottom: '28px',
+            overflowX: 'auto',
+          }}
+        >
+          <h2
+            id="params-table-heading"
+            style={{ fontSize: '22px', fontWeight: 700, marginTop: 0, marginBottom: '12px' }}
+          >
+            4. Fitted Logistic Model Parameters (Training Set Only)
+          </h2>
+          <table
+            style={{
+              width: '100%',
+              borderCollapse: 'collapse',
+              fontSize: '16px',
+              textAlign: 'left',
+            }}
+          >
+            <thead>
+              <tr style={{ backgroundColor: '#f1f5f9', borderBottom: '2px solid #94a3b8' }}>
+                <th style={{ padding: '12px' }}>Feature / Parameter</th>
+                <th style={{ padding: '12px' }}>
+                  Log-Odds (<InlineMath math="\hat{\beta}" />)
+                </th>
+                <th style={{ padding: '12px' }}>Std. Error</th>
+                <th style={{ padding: '12px' }}>
+                  Odds Ratio (<InlineMath math="e^{\hat{\beta}}" />)
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {(modelParams.coefficients as CoefficientRow[]).map((row) => (
+                <tr key={row.term} style={{ borderBottom: '1px solid #e2e8f0' }}>
+                  <td style={{ padding: '12px', fontWeight: 600 }}>
+                    {TERM_LABELS[row.term] ?? row.term}
+                  </td>
+                  <td style={{ padding: '12px', fontFamily: 'monospace', fontSize: '16px' }}>
+                    {row.estimate >= 0 ? `+${row.estimate.toFixed(4)}` : row.estimate.toFixed(4)}
+                  </td>
+                  <td style={{ padding: '12px', fontFamily: 'monospace', fontSize: '16px' }}>
+                    {row.std_error.toFixed(4)}
+                  </td>
+                  <td style={{ padding: '12px', fontFamily: 'monospace', fontSize: '16px' }}>
+                    {row.odds_ratio.toFixed(4)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+
+        {/* Section 5: Sealed Locked Test Set (Single-Use Unlock) */}
+        <section
+          aria-labelledby="locked-test-heading"
+          style={{
+            backgroundColor: testUnlocked ? '#ffffff' : '#fffbeb',
+            border: testUnlocked ? '2px solid #059669' : '2px solid #f59e0b',
+            borderRadius: '12px',
+            padding: '24px 28px',
+          }}
+        >
+          <h2
+            id="locked-test-heading"
+            style={{ fontSize: '22px', fontWeight: 700, marginTop: 0, marginBottom: '12px' }}
+          >
+            5. Locked Test Set Evaluation (n = {modelParams.n_locked_test.toLocaleString()} Unseen Workers)
+          </h2>
+
+          {!testUnlocked ? (
+            <div>
+              <p style={{ fontSize: '16px', marginTop: 0 }}>
+                <strong>Status: SEALED.</strong> The 20% stratified test set (
+                <code>ech_locked_test.json</code>) has never been used to fit or tune any
+                parameter. To preserve an honest one-time evaluation, you may unlock it{' '}
+                <strong>only once</strong> after freezing your model and recording your prior
+                hypothesis below.
+              </p>
+
+              <div style={{ marginBottom: '18px' }}>
+                <label
+                  htmlFor="prior-hypothesis-notes"
+                  style={{ display: 'block', fontWeight: 600, fontSize: '16px', marginBottom: '6px' }}
+                >
+                  Pre-Unlock Hypothesis &amp; Notes (Frozen Before Opening Test Set)
+                </label>
+                <textarea
+                  id="prior-hypothesis-notes"
+                  rows={3}
+                  value={reflectionNotes}
+                  onChange={(e) => setReflectionNotes(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '12px',
+                    fontSize: '16px',
+                    borderRadius: '8px',
+                    border: '1px solid #94a3b8',
+                    fontFamily: 'inherit',
+                  }}
+                />
+              </div>
+
+              {!confirmUnlockModal ? (
+                <button
+                  type="button"
+                  onClick={() => setConfirmUnlockModal(true)}
+                  style={{
+                    backgroundColor: '#b45309',
+                    color: '#ffffff',
+                    fontSize: '17px',
+                    fontWeight: 700,
+                    padding: '14px 24px',
+                    borderRadius: '10px',
+                    border: 'none',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Unlock &amp; Score Locked Test Set Once
+                </button>
+              ) : (
+                <div
+                  role="alertdialog"
+                  aria-labelledby="confirm-unlock-title"
+                  style={{
+                    backgroundColor: '#fef3c7',
+                    border: '1px solid #d97706',
+                    borderRadius: '10px',
+                    padding: '18px',
+                  }}
+                >
+                  <p
+                    id="confirm-unlock-title"
+                    style={{ fontSize: '17px', fontWeight: 700, margin: '0 0 8px' }}
+                  >
+                    Confirm One-Time Test Set Unlock
                   </p>
-                  <div className="h-72 w-full">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={rocData} margin={{ top: 10, right: 20, left: 0, bottom: 10 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                        <XAxis
-                          dataKey="fpr"
-                          type="number"
-                          domain={[0, 1]}
-                          tick={{ fontSize: 11 }}
-                          label={{ value: 'FPR', position: 'insideBottom', offset: -5, fontSize: 12 }}
-                        />
-                        <YAxis
-                          domain={[0, 1]}
-                          tick={{ fontSize: 11 }}
-                          label={{ value: 'TPR', angle: -90, position: 'insideLeft', fontSize: 12 }}
-                        />
-                        <Tooltip />
-                        <Area
-                          type="monotone"
-                          dataKey="tpr"
-                          name="TPR (Sensibilidad)"
-                          stroke="#0284c7"
-                          fill="#bae6fd"
-                          strokeWidth={2}
-                        />
-                      </AreaChart>
-                    </ResponsiveContainer>
+                  <p style={{ fontSize: '16px', margin: '0 0 14px' }}>
+                    Once unlocked, no parameters may be changed or retrained. Are you ready to
+                    evaluate your frozen model on all {modelParams.n_locked_test.toLocaleString()}{' '}
+                    locked test workers?
+                  </p>
+                  <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      onClick={handleUnlockLockedTest}
+                      style={{
+                        backgroundColor: '#047857',
+                        color: '#ffffff',
+                        fontSize: '16px',
+                        fontWeight: 700,
+                        padding: '12px 20px',
+                        borderRadius: '8px',
+                        border: 'none',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Yes, Evaluate Locked Test Set Now (Permanent)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmUnlockModal(false)}
+                      style={{
+                        backgroundColor: '#e2e8f0',
+                        color: '#0f172a',
+                        fontSize: '16px',
+                        fontWeight: 600,
+                        padding: '12px 20px',
+                        borderRadius: '8px',
+                        border: '1px solid #94a3b8',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Cancel (Keep Sealed)
+                    </button>
                   </div>
                 </div>
               )}
+            </div>
+          ) : (
+            testResults && (
+              <div>
+                <div
+                  style={{
+                    backgroundColor: '#ecfdf5',
+                    border: '1px solid #6ee7b7',
+                    borderRadius: '8px',
+                    padding: '14px 18px',
+                    marginBottom: '20px',
+                    fontSize: '16px',
+                    color: '#065f46',
+                  }}
+                >
+                  <strong>UNLOCKED (ONE-TIME EVALUATION COMPLETE):</strong> Model parameters are
+                  permanently frozen. Below are your out-of-sample results on{' '}
+                  <strong>{testResults.nTest.toLocaleString()}</strong> unseen ECH 2025 workers.
+                </div>
 
-              {calibrationData.length > 0 && (
-                <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
-                  <h3 className="text-base font-semibold text-slate-900">
-                    Calibración por Deciles de Riesgo
+                {/* Test Score KPI Cards */}
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                    gap: '16px',
+                    marginBottom: '28px',
+                  }}
+                >
+                  <div
+                    style={{
+                      backgroundColor: '#eff6ff',
+                      border: '1px solid #93c5fd',
+                      borderRadius: '10px',
+                      padding: '16px',
+                    }}
+                  >
+                    <div style={{ fontSize: '16px', color: '#1e40af', fontWeight: 600 }}>
+                      Locked Test Score (<InlineMath math="\log_{10} L" />)
+                    </div>
+                    <div style={{ fontSize: '26px', fontWeight: 800, color: '#1d4ed8' }}>
+                      {testResults.testLog10Score.toFixed(2)}
+                    </div>
+                    <div style={{ fontSize: '16px', color: '#1e3a8a' }}>
+                      Avg: {testResults.testAvgLog10Score.toFixed(4)} / worker
+                    </div>
+                  </div>
+
+                  <div
+                    style={{
+                      backgroundColor: '#f8fafc',
+                      border: '1px solid #cbd5e1',
+                      borderRadius: '10px',
+                      padding: '16px',
+                    }}
+                  >
+                    <div style={{ fontSize: '16px', color: '#475569', fontWeight: 600 }}>
+                      Test Baseline Score (<InlineMath math="\log_{10} L_0" />)
+                    </div>
+                    <div style={{ fontSize: '26px', fontWeight: 800, color: '#334155' }}>
+                      {testResults.nullLog10Score.toFixed(2)}
+                    </div>
+                    <div style={{ fontSize: '16px', color: '#475569' }}>
+                      Avg: {testResults.nullAvgLog10Score.toFixed(4)} / worker
+                    </div>
+                  </div>
+
+                  <div
+                    style={{
+                      backgroundColor: '#ecfdf5',
+                      border: '1px solid #6ee7b7',
+                      borderRadius: '10px',
+                      padding: '16px',
+                    }}
+                  >
+                    <div style={{ fontSize: '16px', color: '#065f46', fontWeight: 600 }}>
+                      Out-of-Sample Score Gain
+                    </div>
+                    <div style={{ fontSize: '26px', fontWeight: 800, color: '#047857' }}>
+                      +{testResults.scoreGainOverNull.toFixed(2)}
+                    </div>
+                    <div style={{ fontSize: '16px', color: '#065f46' }}>
+                      Beats baseline on unseen data
+                    </div>
+                  </div>
+
+                  <div
+                    style={{
+                      backgroundColor: '#f8fafc',
+                      border: '1px solid #cbd5e1',
+                      borderRadius: '10px',
+                      padding: '16px',
+                    }}
+                  >
+                    <div style={{ fontSize: '16px', color: '#475569', fontWeight: 600 }}>
+                      Observed vs. Predicted Rate
+                    </div>
+                    <div style={{ fontSize: '24px', fontWeight: 800, color: '#0f172a' }}>
+                      {(testResults.observedFormalityRate * 100).toFixed(2)}% vs.{' '}
+                      {(testResults.meanPredictedProb * 100).toFixed(2)}%
+                    </div>
+                    <div style={{ fontSize: '16px', color: '#475569' }}>
+                      Overall test-set calibration
+                    </div>
+                  </div>
+                </div>
+
+                {/* Locked Test Chart 1: Calibration by Decile */}
+                <div style={{ marginBottom: '36px' }}>
+                  <h3 style={{ fontSize: '19px', fontWeight: 700, marginBottom: '8px' }}>
+                    A. Locked Test Calibration by Probability Decile (%)
                   </h3>
-                  <p className="text-xs text-slate-500 mt-1 mb-4">
-                    Probabilidad media predicha frente a frecuencia observada en Locked Test
-                  </p>
-                  <div className="h-72 w-full">
+                  <div style={{ width: '100%', height: '340px' }}>
                     <ResponsiveContainer width="100%" height="100%">
                       <LineChart
-                        data={calibrationData}
-                        margin={{ top: 10, right: 20, left: 0, bottom: 10 }}
+                        data={testResults.calibrationBins.map((b) => ({
+                          ...b,
+                          predictedPct: Number((b.mean_pred * 100).toFixed(1)),
+                          observedPct: Number((b.observed_rate * 100).toFixed(1)),
+                        }))}
+                        margin={{ top: 16, right: 24, left: 16, bottom: 24 }}
                       >
-                        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                        <XAxis dataKey="bin" tick={{ fontSize: 11 }} />
-                        <YAxis domain={[0, 1]} tick={{ fontSize: 11 }} />
-                        <Tooltip />
-                        <Legend />
+                        <CartesianGrid strokeDasharray="3 3" stroke="#cbd5e1" />
+                        <XAxis
+                          dataKey="bin_label"
+                          tick={{ fontSize: 16, fill: '#0f172a' }}
+                          label={{
+                            value: 'Predicted Formality Probability Bin (Locked Test)',
+                            position: 'insideBottom',
+                            offset: -14,
+                            fontSize: 16,
+                            fill: '#0f172a',
+                          }}
+                        />
+                        <YAxis
+                          domain={[0, 100]}
+                          tick={{ fontSize: 16, fill: '#0f172a' }}
+                          label={{
+                            value: 'Formality Rate (%)',
+                            angle: -90,
+                            position: 'insideLeft',
+                            fontSize: 16,
+                            fill: '#0f172a',
+                          }}
+                        />
+                        <Tooltip contentStyle={{ fontSize: '16px' }} />
+                        <Legend wrapperStyle={{ fontSize: '16px', paddingTop: '12px' }} />
+                        <ReferenceLine y={50} stroke="#94a3b8" strokeDasharray="4 4" />
                         <Line
                           type="monotone"
-                          dataKey="meanPredicted"
-                          name="Prob. Predicha"
-                          stroke="#0284c7"
-                          strokeWidth={2}
-                          dot={{ r: 4 }}
+                          dataKey="predictedPct"
+                          name="Mean Predicted (%)"
+                          stroke="#2563eb"
+                          strokeWidth={3}
+                          dot={{ r: 5 }}
                         />
                         <Line
                           type="monotone"
-                          dataKey="observedRate"
-                          name="Tasa Observada"
-                          stroke="#10b981"
-                          strokeWidth={2}
-                          dot={{ r: 4 }}
+                          dataKey="observedPct"
+                          name="Observed Formal (%)"
+                          stroke="#059669"
+                          strokeWidth={3}
+                          dot={{ r: 5 }}
                         />
                       </LineChart>
                     </ResponsiveContainer>
                   </div>
                 </div>
-              )}
-            </div>
 
-            {thresholdCurve.length > 0 && (
-              <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
-                <h3 className="text-base font-semibold text-slate-900">
-                  Métricas de Clasificación por Umbral
-                </h3>
-                <div className="h-72 w-full mt-4">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <ScatterChart margin={{ top: 10, right: 20, left: 0, bottom: 10 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                      <XAxis dataKey="threshold" name="Umbral" domain={[0, 1]} tick={{ fontSize: 11 }} />
-                      <YAxis domain={[0, 1]} tick={{ fontSize: 11 }} />
-                      <Tooltip cursor={{ strokeDasharray: '3 3' }} />
-                      <Legend />
-                      <ReferenceLine x={threshold} stroke="#ef4444" strokeDasharray="4 4" />
-                      <Scatter name="F1-Score" data={thresholdCurve} dataKey="f1" fill="#0284c7" line />
-                      <Scatter name="Precision" data={thresholdCurve} dataKey="precision" fill="#10b981" line />
-                      <Scatter name="Recall" data={thresholdCurve} dataKey="recall" fill="#f59e0b" line />
-                    </ScatterChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-            )}
-          </section>
-        )}
-
-        {activeTab === 'simulator' && (
-          <section className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div className="lg:col-span-2 bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-lg font-semibold text-slate-900">
-                    Simulador de Perfil Individual
-                  </h2>
-                  <p className="text-sm text-slate-600">
-                    Modifica los valores de las covariables <InlineMath math="x_j" /> para evaluar la probabilidad predicha.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={handleResetSimulator}
-                  className="px-3 py-1.5 text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition-colors"
-                >
-                  Restablecer valores
-                </button>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-h-[540px] overflow-y-auto pr-1">
-                {normalizedFeatures.map((feat) => {
-                  const val = simInputs[feat.name] ?? 0;
-                  const isBinary =
-                    feat.type === 'binary' ||
-                    (feat.min === 0 && feat.max === 1) ||
-                    (feat.min === undefined && feat.max === undefined && (val === 0 || val === 1));
-
-                  return (
-                    <div
-                      key={feat.name}
-                      className="border border-slate-200 rounded-lg p-3.5 bg-slate-50/60 flex flex-col justify-between"
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <label
-                          htmlFor={`sim-${feat.name}`}
-                          className="text-xs font-semibold text-slate-800 leading-snug"
-                        >
-                          {feat.label || feat.name}
-                        </label>
-                        <span className="text-[11px] font-mono text-slate-500 shrink-0">
-                          β={feat.coef >= 0 ? `+${feat.coef.toFixed(2)}` : feat.coef.toFixed(2)}
-                        </span>
-                      </div>
-
-                      {isBinary ? (
-                        <div className="mt-2.5 flex gap-2">
-                          {[0, 1].map((opt) => (
-                            <button
-                              key={opt}
-                              id={opt === 1 ? `sim-${feat.name}` : undefined}
-                              type="button"
-                              onClick={() =>
-                                setSimInputs((prev) => ({ ...prev, [feat.name]: opt }))
-                              }
-                              className={`flex-1 py-1 text-xs font-medium rounded border transition-colors ${
-                                val === opt
-                                  ? 'bg-sky-600 text-white border-sky-600'
-                                  : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
-                              }`}
-                            >
-                              {opt === 1 ? 'Sí (1)' : 'No (0)'}
-                            </button>
-                          ))}
-                        </div>
-                      ) : (
-                        <input
-                          id={`sim-${feat.name}`}
-                          type="number"
-                          step="any"
-                          value={val}
-                          onChange={(e) => {
-                            const parsed = parseFloat(e.target.value);
-                            setSimInputs((prev) => ({
-                              ...prev,
-                              [feat.name]: Number.isNaN(parsed) ? 0 : parsed,
-                            }));
-                          }}
-                          className="mt-2 w-full border border-slate-300 rounded px-2.5 py-1 text-sm font-mono bg-white focus:outline-none focus:ring-2 focus:ring-sky-500"
-                        />
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-5 h-fit">
-              <h3 className="text-base font-semibold text-slate-900">Resultado de la Predicción</h3>
-
-              <div className="p-5 rounded-xl bg-slate-900 text-white text-center">
-                <span className="text-xs uppercase tracking-wider text-slate-400 block">
-                  Probabilidad Estimada <InlineMath math="\hat{p}" />
-                </span>
-                <span className="text-4xl font-bold text-sky-400 block mt-1">
-                  {(simulationResult.probability * 100).toFixed(2)}%
-                </span>
-                <span className="text-xs text-slate-300 block mt-2">
-                  Logit <InlineMath math="z =" /> {simulationResult.linearPredictor.toFixed(4)}
-                </span>
-                <div className="mt-3">
-                  <span
-                    className={`inline-block px-3 py-1 rounded-full text-xs font-semibold ${
-                      simulationResult.predictedClass === 1
-                        ? 'bg-amber-500/20 text-amber-300 border border-amber-400/40'
-                        : 'bg-emerald-500/20 text-emerald-300 border border-emerald-400/40'
-                    }`}
-                  >
-                    Clasificación (τ={threshold.toFixed(2)}):{' '}
-                    {simulationResult.predictedClass === 1 ? 'Clase Positiva (1)' : 'Clase Base (0)'}
-                  </span>
-                </div>
-              </div>
-
-              <div>
-                <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">
-                  Mayores Contribuciones Activas (<InlineMath math="\beta_j x_j" />)
-                </h4>
-                <ul className="space-y-2 text-xs">
-                  {simulationResult.contributions
-                    .filter((c) => c.contribution !== 0)
-                    .slice(0, 6)
-                    .map((c) => (
-                      <li
-                        key={c.name}
-                        className="flex items-center justify-between border-b border-slate-100 pb-1.5"
+                {/* Locked Test Chart 2: Formality by Firm Size & Sector */}
+                <div style={{ marginBottom: '36px' }}>
+                  <h3 style={{ fontSize: '19px', fontWeight: 700, marginBottom: '8px' }}>
+                    B. Locked Test Formality Rate by Firm Size &amp; Sector (%)
+                  </h3>
+                  <div style={{ width: '100%', height: '360px' }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart
+                        data={testResults.byFirmSize.map((f) => ({
+                          ...f,
+                          label: FIRM_SIZE_LABELS[f.firm_size] ?? f.firm_size,
+                          observedPct: Number((f.observed_rate * 100).toFixed(1)),
+                          predictedPct: Number((f.mean_pred * 100).toFixed(1)),
+                        }))}
+                        margin={{ top: 16, right: 24, left: 16, bottom: 48 }}
                       >
-                        <span className="text-slate-700 truncate pr-2">{c.label}</span>
-                        <span
-                          className={`font-mono font-semibold shrink-0 ${
-                            c.contribution >= 0 ? 'text-sky-700' : 'text-amber-700'
-                          }`}
-                        >
-                          {c.contribution >= 0
-                            ? `+${c.contribution.toFixed(3)}`
-                            : c.contribution.toFixed(3)}
-                        </span>
-                      </li>
-                    ))}
-                </ul>
-              </div>
-            </div>
-          </section>
-        )}
+                        <CartesianGrid strokeDasharray="3 3" stroke="#cbd5e1" />
+                        <XAxis
+                          dataKey="label"
+                          interval={0}
+                          angle={-18}
+                          textAnchor="end"
+                          tick={{ fontSize: 16, fill: '#0f172a' }}
+                        />
+                        <YAxis
+                          domain={[0, 100]}
+                          tick={{ fontSize: 16, fill: '#0f172a' }}
+                          label={{
+                            value: 'Formal Workers (%)',
+                            angle: -90,
+                            position: 'insideLeft',
+                            fontSize: 16,
+                            fill: '#0f172a',
+                          }}
+                        />
+                        <Tooltip contentStyle={{ fontSize: '16px' }} />
+                        <Legend wrapperStyle={{ fontSize: '16px', paddingTop: '24px' }} />
+                        <Bar
+                          dataKey="observedPct"
+                          name="Observed Formal (%)"
+                          fill="#0f766e"
+                          radius={[6, 6, 0, 0]}
+                        />
+                        <Bar
+                          dataKey="predictedPct"
+                          name="Mean Predicted (%)"
+                          fill="#3b82f6"
+                          radius={[6, 6, 0, 0]}
+                        />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
 
-        {activeTab === 'methodology' && (
-          <section className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-5 text-slate-800">
-            <h2 className="text-lg font-semibold text-slate-900">
-              Especificación Econométrica y Protocolo de Evaluación
-            </h2>
-            <p className="text-sm text-slate-600 leading-relaxed">
-              La probabilidad condicional de pertenecer a la categoría objetivo en la Encuesta Continua de Hogares (ECH 2025) se modela mediante regresión logística binaria:
-            </p>
-            <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 overflow-x-auto">
-              <BlockMath math="P(Y_i = 1 \mid \mathbf{x}_i) = \sigma(z_i) = rac{1}{1 + \exp\left(-\left(eta_0 + \sum_{j=1}^{p} eta_j x_{ij}ight)ight)}" />
-            </div>
-            <p className="text-sm text-slate-600 leading-relaxed">
-              La clasificación binaria aplica una regla de umbral <InlineMath math="\hat{y}_i = \mathbb{I}(\hat{p}_i \ge \tau)" /> evaluada estrictamente sobre el conjunto de prueba bloqueado (<code className="text-xs bg-slate-100 px-1.5 py-0.5 rounded">ech_locked_test.json</code>), evitando fuga de información entre estimación y validación.
-            </p>
-            <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 overflow-x-auto">
-              <BlockMath math="	ext{OR}_j = \exp(eta_j), \qquad \mathcal{L}(oldsymbol{eta}) = -rac{1}{N}\sum_{i=1}^{N}\left[y_i \ln(\hat{p}_i) + (1 - y_i)\ln(1 - \hat{p}_i)ight]" />
-            </div>
-          </section>
-        )}
+                {/* Locked Test Chart 3: Formality by Poverty Status */}
+                <div style={{ marginBottom: '24px' }}>
+                  <h3 style={{ fontSize: '19px', fontWeight: 700, marginBottom: '8px' }}>
+                    C. Locked Test Formality Rate by Poverty Status (%)
+                  </h3>
+                  <div style={{ width: '100%', height: '340px' }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart
+                        data={testResults.byPoverty.map((p) => ({
+                          ...p,
+                          observedPct: Number((p.observed_rate * 100).toFixed(1)),
+                          predictedPct: Number((p.mean_pred * 100).toFixed(1)),
+                        }))}
+                        margin={{ top: 16, right: 24, left: 16, bottom: 28 }}
+                      >
+                        <CartesianGrid strokeDasharray="3 3" stroke="#cbd5e1" />
+                        <XAxis
+                          dataKey="label"
+                          interval={0}
+                          tick={{ fontSize: 16, fill: '#0f172a' }}
+                        />
+                        <YAxis
+                          domain={[0, 100]}
+                          tick={{ fontSize: 16, fill: '#0f172a' }}
+                          label={{
+                            value: 'Formal Workers (%)',
+                            angle: -90,
+                            position: 'insideLeft',
+                            fontSize: 16,
+                            fill: '#0f172a',
+                          }}
+                        />
+                        <Tooltip contentStyle={{ fontSize: '16px' }} />
+                        <Legend wrapperStyle={{ fontSize: '16px', paddingTop: '12px' }} />
+                        <Bar
+                          dataKey="observedPct"
+                          name="Observed Formal (%)"
+                          fill="#7c3aed"
+                          radius={[6, 6, 0, 0]}
+                        />
+                        <Bar
+                          dataKey="predictedPct"
+                          name="Mean Predicted (%)"
+                          fill="#38bdf8"
+                          radius={[6, 6, 0, 0]}
+                        />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                {/* Frozen Pre-Unlock Hypothesis Box */}
+                <div
+                  style={{
+                    backgroundColor: '#f8fafc',
+                    border: '1px solid #cbd5e1',
+                    borderRadius: '8px',
+                    padding: '16px',
+                  }}
+                >
+                  <div style={{ fontWeight: 700, fontSize: '16px', marginBottom: '4px' }}>
+                    Your Pre-Unlock Hypothesis (Recorded Before Opening Test Set):
+                  </div>
+                  <p style={{ margin: 0, fontSize: '16px', color: '#334155' }}>{reflectionNotes}</p>
+                </div>
+              </div>
+            )
+          )}
+        </section>
       </main>
     </div>
   );
 }
-
-export default App;
